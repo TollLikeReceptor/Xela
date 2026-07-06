@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quiz Game</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: Georgia, "Times New Roman", serif;
+    background: #0a1045;
+    background: radial-gradient(ellipse at 50% 30%, #16207a 0%, #0a1045 70%);
+    min-height: 100vh;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 2rem 1rem;
+  }
+
+  #loading {
+    margin-top: 30vh;
+    text-align: center;
+    font-size: 1.3rem;
+    color: #ffcc4d;
+  }
+  .spinner {
+    margin: 0 auto 1.5rem;
+    width: 48px; height: 48px;
+    border: 5px solid rgba(255, 204, 77, 0.25);
+    border-top-color: #ffcc4d;
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #game { display: none; width: 100%; max-width: 760px; }
+
+  #category {
+    text-align: center;
+    font-size: clamp(1.4rem, 4vw, 2.2rem);
+    font-weight: bold;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #ffcc4d;
+    text-shadow: 2px 2px 0 rgba(0,0,0,0.5);
+    margin-bottom: 0.4rem;
+  }
+
+  #round-info {
+    text-align: center;
+    font-size: 0.85rem;
+    color: #9fa8e8;
+    margin-bottom: 1.5rem;
+    font-family: Verdana, sans-serif;
+  }
+
+  .card {
+    background: #1d2ccd;
+    background: linear-gradient(135deg, #2334e0 0%, #141fa8 100%);
+    border: 2px solid #0a1045;
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.45);
+    padding: 1.1rem 1.3rem;
+    margin-bottom: 0.9rem;
+    cursor: pointer;
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+    user-select: none;
+  }
+  .card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 7px 18px rgba(0,0,0,0.55);
+  }
+
+  .card .value {
+    font-family: Verdana, sans-serif;
+    font-weight: bold;
+    font-size: 0.8rem;
+    color: #ffcc4d;
+    margin-bottom: 0.4rem;
+  }
+
+  .card .question {
+    font-size: 1.05rem;
+    line-height: 1.45;
+  }
+
+  .card .answer {
+    display: none;
+    margin-top: 0.7rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid rgba(255, 204, 77, 0.4);
+    font-size: 1.1rem;
+    font-weight: bold;
+    color: #ffcc4d;
+  }
+  .card.revealed .answer { display: block; }
+  .card.revealed { background: linear-gradient(135deg, #1a279e 0%, #101871 100%); }
+
+  #controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 1.6rem;
+    gap: 1rem;
+  }
+
+  button {
+    font-family: Verdana, sans-serif;
+    font-size: 1rem;
+    font-weight: bold;
+    padding: 0.7rem 1.8rem;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    background: #ffcc4d;
+    color: #0a1045;
+    box-shadow: 0 3px 8px rgba(0,0,0,0.4);
+    transition: transform 0.12s ease, opacity 0.12s ease;
+  }
+  button:hover:not(:disabled) { transform: translateY(-2px); }
+  button:disabled { opacity: 0.35; cursor: default; }
+
+  #position {
+    font-family: Verdana, sans-serif;
+    font-size: 0.9rem;
+    color: #9fa8e8;
+  }
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="spinner"></div>
+  Loading questions&hellip;
+</div>
+
+<div id="game">
+  <div id="category"></div>
+  <div id="round-info"></div>
+  <div id="cards"></div>
+  <div id="controls">
+    <button id="prev">&larr; Previous</button>
+    <span id="position"></span>
+    <button id="next">Next &rarr;</button>
+  </div>
+</div>
+
+<script>
+const QUESTIONS_PER_ROUND = 5;
+
+let categories = [];        // [{ name, questions: [...] }] only categories with >= 5 usable questions
+let history = [];           // [{ category, cards: [{ question, answer, value, revealed }] }]
+let current = -1;           // index into history
+
+function cleanText(s) {
+  if (!s) return '';
+  s = s.replace(/\\'/g, "'");                    // unescape \'
+  s = s.replace(/<[^>]*>/g, '');                 // strip HTML tags
+  s = s.replace(/^'(.*)'$/s, '$1');              // strip wrapping quotes on questions
+  const el = document.createElement('textarea'); // decode HTML entities
+  el.innerHTML = s;
+  return el.value.trim();
+}
+
+function usable(q) {
+  // Skip clues that depend on external media links
+  return q.question && q.answer && !q.question.includes('href=');
+}
+
+async function load() {
+  const res = await fetch('questions.json');
+  const data = await res.json();
+
+  const byCategory = new Map();
+  for (const q of data) {
+    if (!usable(q)) continue;
+    let list = byCategory.get(q.category);
+    if (!list) byCategory.set(q.category, list = []);
+    list.push(q);
+  }
+  for (const [name, questions] of byCategory) {
+    if (questions.length >= QUESTIONS_PER_ROUND) {
+      categories.push({ name, questions });
+    }
+  }
+
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('game').style.display = 'block';
+  nextRound();
+}
+
+function parseValue(v) {
+  if (!v) return Infinity; // Final Jeopardy / no value sorts last
+  const n = parseInt(v.replace(/[$,]/g, ''), 10);
+  return isNaN(n) ? Infinity : n;
+}
+
+function newRound() {
+  const cat = categories[Math.floor(Math.random() * categories.length)];
+  const pool = cat.questions.slice();
+  const picked = [];
+  for (let i = 0; i < QUESTIONS_PER_ROUND; i++) {
+    picked.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  }
+  picked.sort((a, b) => parseValue(a.value) - parseValue(b.value));
+  return {
+    category: cleanText(cat.name),
+    round: picked[0].round,
+    airDate: picked[0].air_date,
+    cards: picked.map(q => ({
+      question: cleanText(q.question),
+      answer: cleanText(q.answer),
+      value: q.value || '',
+      revealed: false
+    }))
+  };
+}
+
+function render() {
+  const round = history[current];
+  document.getElementById('category').textContent = round.category;
+  document.getElementById('round-info').textContent =
+    'Category ' + (current + 1) + ' of ' + history.length;
+
+  const container = document.getElementById('cards');
+  container.innerHTML = '';
+  round.cards.forEach(card => {
+    const div = document.createElement('div');
+    div.className = 'card' + (card.revealed ? ' revealed' : '');
+
+    if (card.value) {
+      const val = document.createElement('div');
+      val.className = 'value';
+      val.textContent = card.value;
+      div.appendChild(val);
+    }
+
+    const q = document.createElement('div');
+    q.className = 'question';
+    q.textContent = card.question;
+    div.appendChild(q);
+
+    const a = document.createElement('div');
+    a.className = 'answer';
+    a.textContent = card.answer;
+    div.appendChild(a);
+
+    div.addEventListener('click', () => {
+      card.revealed = !card.revealed;
+      div.classList.toggle('revealed', card.revealed);
+    });
+
+    container.appendChild(div);
+  });
+
+  document.getElementById('prev').disabled = current === 0;
+  document.getElementById('position').textContent =
+    (current + 1) + ' / ' + history.length;
+}
+
+function nextRound() {
+  if (current === history.length - 1) {
+    history.push(newRound());
+  }
+  current++;
+  render();
+}
+
+function prevRound() {
+  if (current > 0) {
+    current--;
+    render();
+  }
+}
+
+document.getElementById('next').addEventListener('click', nextRound);
+document.getElementById('prev').addEventListener('click', prevRound);
+
+load().catch(err => {
+  document.getElementById('loading').innerHTML =
+    'Failed to load questions.json &mdash; make sure you are serving this page over HTTP<br>' +
+    '(e.g. <code>python3 -m http.server</code> in this folder).<br><br>' + err;
+});
+</script>
+</body>
+</html>
